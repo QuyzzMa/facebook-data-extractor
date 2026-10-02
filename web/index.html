@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Facebook Data Extractor — Playwright + pandas</title>
+  <meta name="description" content="Trang giới thiệu + demo tĩnh cho công cụ Facebook Data Extractor (Playwright + pandas). Dữ liệu minh hoạ là giả lập." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <header class="nav" id="top">
+    <div class="container nav-inner">
+      <a class="brand" href="#top"><span class="brand-mark">FB</span> Extractor</a>
+      <nav class="nav-links">
+        <a href="#features">Tính năng</a>
+        <a href="#demo">Demo</a>
+        <a href="#workflow">Luồng chạy</a>
+        <a href="#live">Chạy thật</a>
+        <a href="#usage">Cách dùng</a>
+      </nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Đổi giao diện" title="Đổi sáng/tối">🌙</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <span class="badge reveal">Python · Playwright · pandas</span>
+          <h1 class="reveal">Lấy dữ liệu <span class="gradient-text">Facebook</span> gọn gàng &amp; an toàn.</h1>
+          <p class="lead reveal">
+            Mở một trang Facebook bạn được phép xem, cuộn, rồi xuất ra <b>CSV</b>, <b>XLSX</b> và
+            <b>Markdown</b>. Hai chế độ: <code>posts</code> (bài đăng kèm like / bình luận / chia sẻ)
+            hoặc <code>commenters</code> (tên + URL người bình luận).
+          </p>
+          <div class="hero-cta reveal">
+            <a class="btn btn-primary" href="#demo">Xem demo <span aria-hidden="true">→</span></a>
+            <a class="btn btn-ghost" href="#usage">Cách chạy</a>
+          </div>
+          <p class="hint reveal">Dữ liệu demo là <em>giả lập</em> — trang không chứa thông tin người dùng thật.</p>
+        </div>
+
+        <div class="hero-mock reveal" aria-hidden="true">
+          <div class="mock-head"><i></i><i></i><i></i><span>pipeline.log</span></div>
+          <pre class="mock-body"><code><span class="c-dim">$</span> python main.py
+<span class="c-accent">Login mode:</span> storage_state
+<span class="c-dim">Scroll 1/40 ...</span>
+<span class="c-accent">Extract mode:</span> commenters → <b>54 records</b>
+<span class="c-dim">CSV  : output\facebook_posts_....csv</span>
+<span class="c-dim">XLSX : output\facebook_posts_....xlsx</span>
+<span class="c-ok">Finished.</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats">
+      <div class="container stats-grid">
+        <div class="stat reveal"><div class="stat-num" data-count="2">0</div><div class="stat-label">chế độ trích xuất</div></div>
+        <div class="stat reveal"><div class="stat-num" data-count="4">0</div><div class="stat-label">kiểu đăng nhập</div></div>
+        <div class="stat reveal"><div class="stat-num" data-count="3">0</div><div class="stat-label">định dạng xuất</div></div>
+        <div class="stat reveal"><div class="stat-num" data-count="9">0</div><div class="stat-label">unit test</div></div>
+      </div>
+    </section>
+    <section id="features" class="section">
+      <div class="container">
+        <h2 class="section-title reveal">Tính năng</h2>
+        <div class="grid">
+          <article class="card reveal"><div class="ico">🧩</div><h3>Hai chế độ</h3><p><code>posts</code> (mỗi dòng 1 bài) hoặc <code>commenters</code> (mỗi dòng 1 người bình luận).</p></article>
+          <article class="card reveal"><div class="ico">🔐</div><h3>Đăng nhập linh hoạt</h3><p>Cookie đã lưu (<code>storage_state</code>), gắn Chrome/Edge thật (<code>cdp</code>), hoặc profile Playwright.</p></article>
+          <article class="card reveal"><div class="ico">🧠</div><h3>DOM mới + cũ</h3><p>Đọc bài theo <code>data-ad-preview="message"</code> và số liệu qua <code>aria-label</code>, có fallback.</p></article>
+          <article class="card reveal"><div class="ico">🎛️</div><h3>Cuộn có kiểm soát</h3><p><code>max_scrolls</code> + giới hạn thời gian; tự bấm "Xem thêm bình luận" để lấy thêm người.</p></article>
+          <article class="card reveal"><div class="ico">🔔</div><h3>Thông báo truy cập</h3><p>Cảnh báo khi trang yêu cầu đăng nhập, tham gia nhóm, chờ duyệt, giới hạn độ tuổi…</p></article>
+          <article class="card reveal"><div class="ico">📤</div><h3>Xuất 3 định dạng</h3><p>CSV (<code>utf-8-sig</code>), XLSX (tự chỉnh cột) và báo cáo Markdown.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="demo" class="section alt">
+      <div class="container">
+        <h2 class="section-title reveal">Demo dữ liệu</h2>
+        <div class="toolbar reveal">
+          <div class="tabs" role="tablist">
+            <button class="tab active" type="button" data-tab="posts" role="tab">Bài đăng</button>
+            <button class="tab" type="button" data-tab="commenters" role="tab">Người bình luận</button>
+          </div>
+          <label class="search">
+            <span aria-hidden="true">🔎</span>
+            <input id="search" type="search" placeholder="Tìm kiếm trong bảng…" aria-label="Tìm kiếm" />
+          </label>
+        </div>
+        <p class="meta reveal"><b id="count">0</b> dòng · dữ liệu giả lập</p>
+        <div class="table-wrap reveal">
+          <table id="data-table"><thead></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="live" class="section">
+      <div class="container">
+        <h2 class="section-title reveal">Chạy dữ liệu thật</h2>
+        <p class="meta reveal">
+          Nhập URL một trang Facebook bạn được phép xem. Tính năng này cần chạy <b>server cục bộ</b>
+          (vì cần trình duyệt + phiên đăng nhập): <code>python server.py</code> rồi mở
+          <code>http://127.0.0.1:8000</code>.
+        </p>
+        <form id="run-form" class="run-form reveal">
+          <label class="field">
+            <span>URL trang Facebook</span>
+            <input id="run-url" type="text" placeholder="https://www.facebook.com/trang-cua-ban" required />
+          </label>
+          <label class="field field-sm">
+            <span>Chế độ</span>
+            <select id="run-mode">
+              <option value="commenters">Người bình luận</option>
+              <option value="posts">Bài đăng</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" id="run-btn" type="submit">Chạy</button>
+        </form>
+        <div id="run-alert" class="alert" hidden></div>
+        <p class="meta" id="run-state" hidden></p>
+        <pre id="run-log" class="code" hidden></pre>
+        <div class="table-wrap" id="run-results" hidden>
+          <table id="live-table"><thead></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow" class="section">
+      <div class="container">
+        <h2 class="section-title reveal">Luồng chạy</h2>
+        <ol class="flow">
+          <li class="flow-step reveal"><span class="flow-num">1</span><h3>Nhập URL</h3><p>Chọn trang Facebook mỗi lần chạy.</p></li>
+          <li class="flow-step reveal"><span class="flow-num">2</span><h3>Đăng nhập</h3><p>Dùng phiên đã lưu (cookie) — không lưu mật khẩu.</p></li>
+          <li class="flow-step reveal"><span class="flow-num">3</span><h3>Cuộn &amp; bóc tách</h3><p>Cuộn có giới hạn, bấm "Xem thêm bình luận", parse DOM.</p></li>
+          <li class="flow-step reveal"><span class="flow-num">4</span><h3>Xuất kết quả</h3><p>CSV + XLSX + báo cáo Markdown trong <code>output\</code>.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="usage" class="section alt">
+      <div class="container">
+        <h2 class="section-title reveal">Cách chạy</h2>
+        <div class="steps-card reveal">
+          <pre class="code"><code><span class="c-dim"># cài đặt một lần</span>
+py -3 -m venv .venv
+.\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt
+.\\.venv\\Scripts\\python.exe -m playwright install chromium
+
+<span class="c-dim"># chạy (hỏi URL; Enter để dùng mặc định)</span>
+.\\.venv\\Scripts\\python.exe main.py
+
+<span class="c-dim"># làm mới phiên khi hết hạn</span>
+cookie.bat   &amp;&amp;   run.bat</code></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <p>Chỉ thu thập nội dung bạn được phép truy cập. Không vượt CAPTCHA hay giới hạn truy cập.</p>
+      <p class="muted">Trang tĩnh, không phụ thuộc dịch vụ ngoài — deploy được lên GitHub Pages / Netlify / Vercel.</p>
+    </div>
+  </footer>
+
+  <script src="data.sample.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
+

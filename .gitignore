@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Browser profile / Facebook session
+data/session/
+data/edge-debug-profile/
+
+# Scraped / generated data
+data/raw/
+logs/
+output/
+
+# Cookie / temporary files
+cookie_paste.json
+
+# Secrets / environment
+.env
+.env.*
+*.secret
+# Local configuration
+config/config.json

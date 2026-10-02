@@ -1,0 +1,7 @@
+playwright>=1.55,<2
+pandas>=2.2,<3
+openpyxl>=3.1,<4
+beautifulsoup4>=4.12,<5
+lxml>=5.0,<7
+tabulate>=0.9,<1
+flask>=3,<4
