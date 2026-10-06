@@ -38,16 +38,20 @@ Facebook is far less likely to challenge a browser you actually use. Start Chrom
 
 # Option B: start Chrome yourself first
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-  --remote-debugging-port=9222 --user-data-dir="D:\chrome-debug" `
-  "https://www.facebook.com/schannel.vn"
+  --remote-debugging-port=9222 --user-data-dir="C:\chrome-debug" `
+  "https://www.facebook.com/example.page"
 # config: "login_mode": "cdp", "cdp_autostart": false
 .\.venv\Scripts\python.exe main.py
 ```
 
 The tool connects via `connect_over_cdp`, opens a dedicated tab that shares your logged-in session, and never closes your Chrome (the tab it opened is closed when the run ends). Set `save_storage_state = true` to also export the cookies to `data/session/facebook_state.json`.
 
-### `storage_state` — Reuse saved cookies (no browser needed each run)
-Reads cookies/localStorage from `storage_state_path` (default `data/session/facebook_state.json`). Produce that file by running once in `cdp` mode with `save_storage_state = true`, or by pasting cookies exported with a browser extension (Cookie-Editor format is compatible with Playwright's `storage_state`). Cookies expire periodically, so refresh when the source starts returning zero rows.
+### `storage_state` — Saved cookie file (DEFAULT, recommended)
+This is the default `login_mode`. The tool reads cookies/localStorage from `storage_state_path` (default `data/session/facebook_state.json`):
+
+- **First run** (or if the file is missing/invalid): the tool opens a visible browser window (`headless` must be `false`) and asks you to log in manually. It never fills in your password and never bypasses CAPTCHA or checkpoints. After you finish logging in, the session is saved to `storage_state_path` (when `save_storage_state = true`).
+- **Later runs**: the saved session is reused without a visible browser. When the session has expired, the tool detects the login wall, opens the visible browser, and asks you to log in again; the new session is saved automatically.
+- **Manual alternatives**: `cookie.bat` / `scripts/cookie_to_state.py` convert a Cookie-Editor JSON export into the same file, and `cdp` mode with `save_storage_state = true` can also export cookies.
 
 ### Extra options
 - `use_real_chrome: true` — use the installed Chrome (`channel="chrome"`) instead of the bundled Chromium. Combined with a few stealth tweaks (hiding `navigator.webdriver`, launched with `--disable-blink-features=AutomationControlled`) it lowers the chance of a security checkpoint.
@@ -57,7 +61,8 @@ Use these only for content your account is authorized to access. Do not use the 
 ## Setup on Windows PowerShell
 
 ```powershell
-cd "D:\Downloads\facebook_data_extractor_fixed"
+# go to the folder where this project lives on your machine, e.g.:
+cd "C:\path\to\facebook_data_extractor_fixed"
 ```
 
 Create the environment if needed:
@@ -83,14 +88,17 @@ Run:
 
 Two helper batch files are provided in the project root:
 
-- **`run.bat`** - runs the pipeline with the project's virtual environment, prints a reminder about the saved login session, and opens the `output\` folder when finished. If you see `Parsed 0 records`, the session has expired -> run `cookie.bat`.
+- **`run.bat`** - runs the pipeline with the project's virtual environment, prints a reminder about the saved login session, and opens the `output\` folder when finished. If you see `Parsed 0 records`, the session is usually expired - re-run with `headless: false` so the tool can open the browser for a manual re-login (or refresh it manually with `cookie.bat`).
 - **`cookie.bat`** - refreshes the login session. It reads the cookie JSON from your clipboard (Cookie-Editor's **Export -> Export as JSON** copies it there) and converts it into `data/session/facebook_state.json`. If the clipboard has no JSON, it opens Notepad so you can paste manually.
 
 Typical flow:
 
 ```text
 1. Double-click run.bat
-2. If it reports 0 records (session expired): double-click cookie.bat, then run.bat again
+2. First run, or expired session (with headless=false): log in in the browser window that opens;
+   the session is saved automatically
+3. Later runs: the saved session is reused - you only log in again when it expires
+   (manual alternative: cookie.bat pastes a Cookie-Editor JSON export into the session file)
 ```
 
 > The cookie JSON is sensitive (it can be used to access your account). It is converted locally and the temporary paste file is deleted afterwards. Do not share it.
@@ -101,7 +109,7 @@ Edit `config/config.json`:
 
 ```json
 {
-  "url": "https://www.facebook.com/schannel.vn",
+  "url": "https://www.facebook.com/example.page",
   "extract_mode": "commenters",
   "max_scrolls": 40,
   "scroll_pause_seconds": 2,
@@ -129,7 +137,7 @@ Edit `config/config.json`:
 | `expand_comments` | Click "view more comments" to load more commenters. |
 | `snapshot_every` | Capture the page every N scrolls in `commenters` mode (0 = off). |
 | `prompt_for_url` | Ask for the URL on every run. |
-| `login_mode` | `storage_state` / `cdp` / `persistent` / `anonymous`. |
+| `login_mode` | `storage_state` (default) / `cdp` / `persistent` / `anonymous`. |
 | `headless` | Run the browser hidden (no interactive login). |
 
 ## Pipeline
@@ -213,15 +221,20 @@ If the log says `Parsed 0 records`, do not immediately change selectors. First i
 Facebook's DOM is dynamic and can change. A parser that works today may need maintenance later.
 
 
-## Login pause
+## Login handling
 
-If Facebook shows a login form and `headless` is false, the script pauses and asks you to log in in the browser window, then press Enter in the terminal. The login is saved in `data/session/facebook` and reused next time. A screenshot is saved next to each raw HTML file in `data/raw/`.
+If Facebook shows a login form and `headless` is false, the tool opens the visible browser window and asks you to log in manually - it never fills in your password and never bypasses CAPTCHA or checkpoints. The finished login is then saved and reused on the next run:
+
+- `storage_state` (default): saved to `data/session/facebook_state.json`.
+- `persistent`: saved under the `data/session/facebook` browser profile.
+
+A screenshot is saved next to each raw HTML file in `data/raw/`.
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
-| `Parsed 0 records` | The session expired or the page needs login. Run `cookie.bat`, then `run.bat`. Read the notice printed in the console. |
+| `Parsed 0 records` | The session expired or the page needs login. Re-run with `headless: false` so the tool opens the browser for a manual re-login (or refresh via `cookie.bat`). Read the notice printed in the console. |
 | Only a few commenters | Facebook renders only a handful of comments per post. The tool clicks "view more comments", but fully loading every comment requires opening each post. Lower `max_scrolls` so more posts stay rendered, or raise `snapshot_every`. |
 | Run takes very long | Lower `max_scrolls` and/or `max_scroll_seconds`. Big pages keep loading. |
 | Scrolling feels laggy | The live feed becomes huge. Lower `max_scrolls`, keep `max_scroll_seconds` small, or set `headless: true`. |
@@ -230,7 +243,7 @@ If Facebook shows a login form and `headless` is false, the script pauses and as
 
 ## FAQ
 
-- **Can it auto-login?** No. Facebook blocks automation logins; you refresh the session with `cookie.bat` (browser extension export).
+- **Can it auto-login?** It manages the session for you: on the first run (or when the session expires) it opens a visible browser window where you log in manually, then saves and reuses that session on later runs. It never fills in your password and never bypasses CAPTCHA or checkpoints. `cookie.bat` remains available as a manual alternative.
 - **Where are the results?** In `output\` as `.csv`, `.xlsx` and `.md`.
 - **Where is the raw data for debugging?** `data\raw\` (rendered HTML + screenshot).
 - **Is the cookie file safe?** `data/session/facebook_state.json` can access your account - keep it private and never commit it.
@@ -269,6 +282,17 @@ search + tabs, workflow, and usage). No build step and no external service requi
 - The demo uses **synthetic** data in `web/data.sample.js` - never publish real user data.
 - Includes a light/dark theme toggle, scroll-reveal animations and animated counters.
 
+## Scrolling & Virtualization-proof Story Capture
+
+Facebook removes story cards from the DOM once they scroll far out of view. To ensure every story seen during a run is captured, the scraper samples the page in small steps of 1,000 pixels. At each step, every top-level `[role="article"]` card is:
+
+1. Extracted
+2. De-duplicated by the first **200 characters** of that card's own text (nested comment threads are ignored)
+3. Merged into a single HTML document
+
+The merged document is the **last** element of the returned list, so the parser sees every story that was on screen at any point during the run. By default, `max_scrolls` is 40 (40,000 pixels) and `snapshot_every` captures the page state every 5 scrolls. Lower `max_scrolls` (and keep `max_scroll_seconds` small) if scrolling feels slow or laggy.
+
+## Responsible use
 ## Responsible use
 
 Collect only content you are authorized to access, prefer official APIs where they fit, and do not bypass CAPTCHA, anti-bot controls, access restrictions or privacy controls. See `docs/RESPONSIBLE_USE.md`.
