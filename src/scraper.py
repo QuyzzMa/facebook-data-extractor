@@ -35,9 +35,84 @@ Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN', 'vi', 'en-U
 Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
 """
 
+# --- Virtualisation-proof story capture -------------------------------------
+# Facebook removes stories from the DOM once they scroll far out of view, so the
+# HTML read at the end of a run is missing most of what was seen. These settings
+# drive small scroll steps that re-collect every top-level story card, keyed by
+# the opening text of the card, and merge the unique cards before parsing.
+ARTICLE_SELECTOR = '[role="article"]'
+STORY_DEDUPE_PREFIX_CHARS = 200
+SCROLL_STEP_PIXELS = 1000
+
+COLLECT_STORIES_JS = """
+() => {
+  const prefixLength = %d;
+  const normalise = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+  const articles = Array.from(document.querySelectorAll('[role="article"]'));
+  const topLevel = articles.filter((node) => {
+    const parent = node.parentElement;
+    return !parent || !parent.closest('[role="article"]');
+  });
+  return topLevel.map((node) => {
+    const clone = node.cloneNode(true);
+    // Nested cards are the comment threads; their text must not leak into the
+    // key of the post that contains them.
+    clone.querySelectorAll('[role="article"]').forEach((nested) => nested.remove());
+    const ownText = normalise(clone.textContent);
+    const permalink = node.querySelector(
+      'a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"]'
+    );
+    const html = node.outerHTML;
+    const key = (ownText.slice(0, prefixLength) || (permalink ? permalink.href : '')
+      || normalise(html).slice(0, prefixLength)).toLowerCase();
+    return { key: key, html: html, text_length: ownText.length };
+  });
+}
+""" % STORY_DEDUPE_PREFIX_CHARS
+
+MERGE_HEAD = (
+    "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</head>\n<body>\n"
+)
+MERGE_TAIL = "\n</body>\n</html>\n"
+
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def _merge_stories_html(stories: dict[str, dict]) -> str:
+    """Join the captured story cards into one document for the parser."""
+    parts = [story["html"] for story in stories.values() if story.get("html")]
+    return MERGE_HEAD + "\n".join(parts) + MERGE_TAIL
+
+
+async def _collect_stories(page) -> list[dict]:
+    """Return the top-level story cards currently rendered in the page."""
+    try:
+        stories = await page.evaluate(COLLECT_STORIES_JS)
+    except Exception:
+        logger.debug("Could not collect story cards", exc_info=True)
+        return []
+    if not isinstance(stories, list):
+        return []
+    return [
+        story
+        for story in stories
+        if isinstance(story, dict) and story.get("key") and story.get("html")
+    ]
+
+
+def _merge_into(collected: dict[str, dict], stories: list[dict]) -> int:
+    """Store stories by key, keeping the newest copy of each. Returns new keys."""
+    added = 0
+    for story in stories:
+        key = story["key"]
+        if key not in collected:
+            added += 1
+        # Overwrite on purpose: a later capture of the same card usually carries
+        # more expanded comments than the first one.
+        collected[key] = story
+    return added
 
 
 async def _has_login_form(page) -> bool:
@@ -95,9 +170,69 @@ async def _expand_comment_threads(page, rounds: int = 3, limit: int = 15) -> Non
 
 async def _count_articles(page) -> int:
     try:
-        return await page.locator('[role="article"]').count()
+        return await page.locator(ARTICLE_SELECTOR).count()
     except Exception:
         return 0
+
+
+PROFILE_INDICATORS = (
+    '[aria-label="Profile"]',
+    '[aria-label="Tài khoản"]',
+    '[data-testid="profile-popover"]',
+    '[data-testid="fb://profile"]',
+)
+LOGIN_URL_TOKENS = ("/login", "checkpoint", "recover")
+FEED_CONTENT_SELECTOR = '[data-ad-preview="message"], [role="article"]'
+
+WAIT_FOR_LOGIN_JS = """
+() => {
+  const profileSelectors = %s;
+  const url = window.location.href;
+  const blocked = url.includes('/login') || url.includes('checkpoint') || url.includes('recover');
+  for (const selector of profileSelectors) {
+    if (document.querySelector(selector) && !blocked) {
+      return true;
+    }
+  }
+  return document.querySelectorAll('%s').length > 0;
+}
+""" % (
+    "[" + ", ".join("'%s'" % selector for selector in PROFILE_INDICATORS) + "]",
+    FEED_CONTENT_SELECTOR,
+)
+
+
+async def _is_logged_in(page) -> bool:
+    """Check whether the current page shows a logged-in Facebook session."""
+    try:
+        if any(token in page.url for token in LOGIN_URL_TOKENS):
+            return False
+        for selector in PROFILE_INDICATORS:
+            try:
+                if await page.locator(selector).count() > 0:
+                    return True
+            except Exception:
+                continue
+        try:
+            return await page.locator(FEED_CONTENT_SELECTOR).count() > 0
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
+async def _load_existing_context(browser, storage_state_path: str):
+    """Load a browser context from an existing storage-state file, if any."""
+    state_file = Path(storage_state_path)
+    if not state_file.exists():
+        return None
+    try:
+        context = await browser.new_context(storage_state=str(state_file))
+        logger.info("Loaded existing session state from %s", state_file)
+        return context
+    except Exception as exc:
+        logger.warning("Could not load session state from %s: %s", storage_state_path, exc)
+        return None
 
 
 def _resolve_login_mode(login_mode: str | None, session_enabled: bool) -> str:
@@ -108,6 +243,49 @@ def _resolve_login_mode(login_mode: str | None, session_enabled: bool) -> str:
             return mode
         logger.warning("Unknown login_mode %r; falling back automatically.", login_mode)
     return "persistent" if session_enabled else "anonymous"
+
+
+async def _prompt_for_manual_login(browser, url: str) -> object:
+    """Open a visible browser, let the user log in, and return that context.
+
+    Credentials are never read, typed or stored by this code.
+    """
+    context = await browser.new_context()
+    try:
+        logger.info("Opening a browser window for manual Facebook login...")
+        page = await context.new_page()
+        await page.goto("https://www.facebook.com", wait_until="domcontentloaded")
+        if await _is_logged_in(page):
+            logger.info("Already logged in; reusing this session.")
+            await page.close()
+            return context
+        if "login" not in page.url:
+            await page.goto("https://www.facebook.com/login", wait_until="domcontentloaded")
+        logger.info("Complete the Facebook login in the browser window.")
+        logger.info("The scraper continues automatically once the login is detected.")
+        await page.wait_for_function(WAIT_FOR_LOGIN_JS, timeout=MANUAL_LOGIN_TIMEOUT_MS)
+        logger.info("Facebook login detected; continuing.")
+        await page.close()
+        return context
+    except Exception as exc:
+        logger.error("Timed out waiting for the manual login: %s", exc)
+        await context.close()
+        raise RuntimeError("Manual login did not complete in time. Please run again.") from exc
+
+
+async def _validate_session_state(context, url: str) -> bool:
+    """Check that a saved session is still accepted by Facebook."""
+    try:
+        page = await context.new_page()
+        target = url if url.startswith("https://www.facebook.com") else "https://www.facebook.com"
+        await page.goto(target, wait_until="domcontentloaded", timeout=30_000)
+        await _close_dialog(page)
+        is_logged_in = await _is_logged_in(page)
+        await page.close()
+        return is_logged_in
+    except Exception as exc:
+        logger.warning("Session validation failed: %s", exc)
+        return False
 
 
 def _find_chrome_executable() -> str | None:
@@ -160,7 +338,7 @@ def _cdp_reachable(cdp_url: str) -> bool:
 def _launch_debug_chrome(
     cdp_url: str, profile_dir: str, url: str, executable: str | None = None
 ) -> None:
-    """Start a real Chromium browser with a debugging port + a dedicated profile.
+    """Start a real Chromium browser with a debugging port and a dedicated profile.
 
     Log in once in that window; the profile keeps the session for later runs.
     """
@@ -205,11 +383,90 @@ async def _connect_cdp(p, cdp_url: str, timeout_ms: int):
 
 
 async def _apply_stealth(context) -> None:
-    """Reduce common automation fingerprints for the given browser context."""
+    """Reduce the most common automation fingerprints in the given context."""
     try:
         await context.add_init_script(STEALTH_INIT_SCRIPT)
     except Exception:
-        logger.debug("Could not apply stealth init script", exc_info=True)
+        logger.debug("Could not apply the stealth init script", exc_info=True)
+
+
+# --- Run tuning -------------------------------------------------------------
+VIEWPORT = {"width": 1440, "height": 900}
+INITIAL_SETTLE_MS = 4000
+CLOSE_DIALOG_EVERY = 5
+EXPAND_COMMENTS_EVERY = 4
+SCROLL_MOUSE_X = 720
+SCROLL_MOUSE_Y = 500
+ARTICLE_WAIT_MS = 10_000
+MANUAL_LOGIN_TIMEOUT_MS = 300_000
+
+
+async def _open_owned_context(
+    p,
+    mode: str,
+    headless: bool,
+    channel: str | None,
+    state_file: Path | None,
+    session_path: Path,
+    url: str,
+):
+    """Launch a browser owned by this run and return ``(browser, context, page)``.
+
+    ``persistent`` returns ``browser=None`` because Playwright owns it through the
+    persistent context. For ``storage_state`` the saved cookies are validated
+    first: an expired or missing session triggers a visible re-login and the
+    refreshed cookies are written back to ``state_file``.
+    """
+    storage_state = None
+    if mode == "storage_state" and state_file is not None and state_file.exists():
+        storage_state = str(state_file)
+        logger.info("Reusing saved session state: %s", state_file)
+
+    if mode == "persistent":
+        logger.info("Using persistent browser session: %s", session_path)
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=str(session_path.resolve()),
+            headless=headless,
+            channel=channel,
+            args=LAUNCH_ARGS,
+            viewport=VIEWPORT,
+        )
+        page = context.pages[0] if context.pages else await context.new_page()
+        return None, context, page
+
+    browser = await p.chromium.launch(headless=headless, channel=channel, args=LAUNCH_ARGS)
+    context = await browser.new_context(viewport=VIEWPORT, storage_state=storage_state)
+    page = context.pages[0] if context.pages else await context.new_page()
+
+    if mode != "storage_state":
+        return browser, context, page
+
+    has_state = state_file is not None and state_file.exists()
+    if has_state and await _validate_session_state(context, url):
+        logger.info("Saved session state is valid.")
+        return browser, context, page
+
+    if headless:
+        raise RuntimeError(
+            "The saved session is missing or expired and headless=true cannot log in. "
+            "Run again with headless=false, or refresh the session with cookie.bat."
+        )
+
+    logger.warning("The saved session is missing or expired; a manual login is required.")
+    await context.close()
+    await browser.close()
+
+    browser = await p.chromium.launch(headless=False, channel=channel, args=LAUNCH_ARGS)
+    context = await _prompt_for_manual_login(browser, url)
+    if state_file is not None:
+        try:
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+            await context.storage_state(path=str(state_file))
+            logger.info("Saved the refreshed session state: %s", state_file)
+        except Exception:
+            logger.exception("Could not save the refreshed session state")
+    page = context.pages[0] if context.pages else await context.new_page()
+    return browser, context, page
 
 
 async def fetch_rendered_html(
@@ -236,7 +493,7 @@ async def fetch_rendered_html(
     use_real_chrome: bool = False,
     browser_executable: str = "",
 ) -> list[str]:
-    """Open a Facebook URL and return the rendered HTML.
+    """Open a Facebook URL and return the captured HTML documents.
 
     Login strategies (``login_mode``):
 
@@ -246,13 +503,21 @@ async def fetch_rendered_html(
     * ``storage_state`` - import cookies/localStorage from ``storage_state_path``.
     * ``anonymous``     - a fresh context with no saved session.
 
-    If a login form is detected and the browser is visible, the script pauses so
-    you can log in yourself. Credentials are never read or stored by this code.
+    Facebook removes story cards from the DOM once they leave the viewport
+    (virtualisation), so the page is sampled in small steps of
+    :data:`SCROLL_STEP_PIXELS` and every top-level ``[role="article"]`` card is
+    captured, de-duplicated by the opening :data:`STORY_DEDUPE_PREFIX_CHARS`
+    characters of that card's own text, and merged. The merged document is the
+    **last** element of the returned list, so the parser sees every story that was
+    on screen at any point during the run.
+
+    Credentials are never read, typed or stored by this code.
     """
     raw_path = Path(raw_dir)
     raw_path.mkdir(parents=True, exist_ok=True)
     session_path = Path(session_dir)
     session_path.mkdir(parents=True, exist_ok=True)
+    pause_ms = max(int(scroll_pause_seconds * 1000), 0)
 
     mode = _resolve_login_mode(login_mode, session_enabled)
     channel = CHROME_CHANNEL if use_real_chrome else None
@@ -273,41 +538,24 @@ async def fetch_rendered_html(
                     )
                 logger.info("Connecting to Chrome over CDP: %s", cdp_url)
                 browser = await _connect_cdp(p, cdp_url, timeout_ms)
-                context = browser.contexts[0] if browser.contexts else await browser.new_context()
-                # Open a dedicated tab that shares the existing login cookies.
+                context = (
+                    browser.contexts[0] if browser.contexts else await browser.new_context()
+                )
+                # A dedicated tab that shares the existing logged-in cookies.
                 page = await context.new_page()
                 owns_page = True
             else:
-                storage_state = None
-                if mode == "storage_state" and state_file and state_file.exists():
-                    storage_state = str(state_file)
-                    logger.info("Reusing saved session state: %s", state_file)
-                if mode == "persistent":
-                    logger.info("Using persistent browser session: %s", session_path)
-                    context = await p.chromium.launch_persistent_context(
-                        user_data_dir=str(session_path.resolve()),
-                        headless=headless,
-                        channel=channel,
-                        args=LAUNCH_ARGS,
-                        viewport={"width": 1440, "height": 900},
-                    )
-                else:
-                    browser = await p.chromium.launch(
-                        headless=headless, channel=channel, args=LAUNCH_ARGS
-                    )
-                    context = await browser.new_context(
-                        viewport={"width": 1440, "height": 900},
-                        storage_state=storage_state,
-                    )
+                browser, context, page = await _open_owned_context(
+                    p, mode, headless, channel, state_file, session_path, url
+                )
                 owns_browser = True
-                page = context.pages[0] if context.pages else await context.new_page()
 
             await _apply_stealth(context)
             page.set_default_timeout(timeout_ms)
 
             logger.info("Opening URL: %s", url)
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            await page.wait_for_timeout(4000)
+            await page.wait_for_timeout(INITIAL_SETTLE_MS)
 
             if await _has_login_form(page):
                 if wait_for_login and not headless:
@@ -320,32 +568,46 @@ async def fetch_rendered_html(
                     )
                     await asyncio.to_thread(input, "Press Enter to continue... ")
                     await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-                    await page.wait_for_timeout(4000)
+                    await page.wait_for_timeout(INITIAL_SETTLE_MS)
                 else:
                     logger.warning(
                         "Facebook is showing a login form; posts are probably not available. "
-                        "Run with headless=false and session_enabled=true to log in once."
+                        "Run with headless=false and wait_for_login=true to log in once."
                     )
 
             await _close_dialog(page)
-
             try:
-                await page.wait_for_selector('[role="article"]', timeout=10_000)
+                await page.wait_for_selector(ARTICLE_SELECTOR, timeout=ARTICLE_WAIT_MS)
             except Exception:
-                logger.warning("No [role=article] elements appeared after 10 seconds")
+                logger.warning(
+                    "No [role=article] elements appeared within %ss (%s found).",
+                    ARTICLE_WAIT_MS // 1000,
+                    await _count_articles(page),
+                )
 
             snapshots: list[str] = []
-            await page.mouse.move(720, 500)
+            collected: dict[str, dict] = {}
+            await page.mouse.move(SCROLL_MOUSE_X, SCROLL_MOUSE_Y)
             started = time.monotonic()
             for index in range(max_scrolls):
-                await page.keyboard.press("End")
-                await page.mouse.wheel(0, 6000)
-                await page.wait_for_timeout(int(scroll_pause_seconds * 1000))
-                if index % 5 == 0:
+                await page.mouse.wheel(0, SCROLL_STEP_PIXELS)
+                await page.wait_for_timeout(pause_ms)
+                if index % CLOSE_DIALOG_EVERY == 0:
                     await _close_dialog(page)
-                logger.info("Scroll %s/%s", index + 1, max_scrolls)
-                if expand_comments and index % 4 == 0:
+                if expand_comments and index % EXPAND_COMMENTS_EVERY == 0:
                     await _expand_comment_threads(page, rounds=1, limit=6)
+
+                stories = await _collect_stories(page)
+                added = _merge_into(collected, stories)
+                logger.info(
+                    "Scroll %s/%s | cards on page: %s | unique stories collected: %s (+%s)",
+                    index + 1,
+                    max_scrolls,
+                    len(stories),
+                    len(collected),
+                    added,
+                )
+
                 if snapshot_every and (index + 1) % snapshot_every == 0:
                     snapshots.append(await page.content())
                 if max_scroll_seconds and (time.monotonic() - started) >= max_scroll_seconds:
@@ -355,20 +617,31 @@ async def fetch_rendered_html(
             if expand_comments:
                 await _expand_comment_threads(page)
             await _expand_see_more(page)
+            added = _merge_into(collected, await _collect_stories(page))
+            logger.info("Final sweep | unique stories collected: %s (+%s)", len(collected), added)
+
             html = await page.content()
             snapshots.append(html)
+            if collected:
+                snapshots.append(_merge_stories_html(collected))
 
             if save_raw_html:
                 stamp = _timestamp()
                 raw_file = raw_path / f"facebook_page_{stamp}.html"
                 raw_file.write_text(html, encoding="utf-8")
                 logger.info("Saved raw HTML: %s", raw_file)
+                if collected:
+                    stories_file = raw_path / f"facebook_stories_{stamp}.html"
+                    stories_file.write_text(_merge_stories_html(collected), encoding="utf-8")
+                    logger.info(
+                        "Saved %s merged story cards: %s", len(collected), stories_file
+                    )
                 try:
                     shot = raw_path / f"facebook_page_{stamp}.png"
                     await page.screenshot(path=str(shot), full_page=False)
                     logger.info("Saved screenshot: %s", shot)
                 except Exception:
-                    logger.exception("Could not save screenshot")
+                    logger.exception("Could not save the screenshot")
 
             if save_storage_state and state_file is not None:
                 try:
@@ -376,7 +649,7 @@ async def fetch_rendered_html(
                     await context.storage_state(path=str(state_file))
                     logger.info("Saved session state: %s", state_file)
                 except Exception:
-                    logger.exception("Could not save session state")
+                    logger.exception("Could not save the session state")
 
             return snapshots
         except Exception:
@@ -388,7 +661,7 @@ async def fetch_rendered_html(
                         await pages[0].screenshot(path=str(screenshot), full_page=False)
                         logger.info("Saved error screenshot: %s", screenshot)
                 except Exception:
-                    logger.exception("Could not save error screenshot")
+                    logger.exception("Could not save the error screenshot")
             raise
         finally:
             if owns_browser:

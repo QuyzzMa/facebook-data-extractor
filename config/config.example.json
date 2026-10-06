@@ -11,17 +11,17 @@
   "output_prefix": "facebook_posts",
   "session_enabled": false,
   "session_dir": "data/session/facebook",
-  "save_raw_html": false,
+  "save_raw_html": true,
   "save_screenshot_on_error": true,
   "fail_on_zero_records": false,
-  "wait_for_login": false,
+  "wait_for_login": true,
   "login_mode": "storage_state",
   "cdp_url": "http://localhost:9222",
   "cdp_autostart": false,
   "chrome_profile_dir": "data/edge-debug-profile",
   "storage_state_path": "data/session/facebook_state.json",
-  "save_storage_state": false,
+  "save_storage_state": true,
   "use_real_chrome": false,
   "prompt_for_url": true,
-  "browser_executable": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+  "browser_executable": ""
 }
