@@ -159,10 +159,6 @@ def _parse_legacy_posts(soup, source_url: str) -> list[dict]:
             continue
 
         text = _extract_message(article) or full_text
-        # Bỏ qua nội dung giống comment/bình luận
-        if not _is_useful_post(text):
-            continue
-
         key = (post_url or "", text[:300])
         if key in seen_keys:
             continue
@@ -254,10 +250,6 @@ def _parse_message_posts(soup, source_url: str) -> list[dict]:
         if len(text) < 10:
             continue
 
-        # Bỏ qua nội dung giống comment/bình luận
-        if not _is_useful_post(text):
-            continue
-
         post_url = _extract_story_url(root, source_url)
         key = (post_url or "", text[:300])
         if key in seen_keys:
@@ -346,38 +338,16 @@ def _find_comment_block(link):
     return None
 
 
-def _looks_like_comment(text: str) -> bool:
-    """Trả về True nếu văn bản trông giống một comment/bình luận hơn là một bài đăng."""
-    if not text:
-        return False
-    trimmed = text.strip()
-    # Bắt đầu với thời gian (ví dụ: "2 phút trước", "2 giờ")
-    if re.search(r"^\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y)\b", trimmed):
-        return True
-    # Bắt đầu với "Tác giả:" hoặc "Author:"
-    if LEADING_AUTHOR_RE.search(trimmed):
-        return True
-    # Bắt đầu với "Verified account" (tài khoản xác minh)
-    if VERIFIED_RE.search(trimmed):
-        return True
-    # Chỉ giữ một số ký tự (thường là comment/meta)
-    if len(trimmed) < 15 and re.match(r"^[A-Za-z0-9._%+-]{3,30}$", trimmed):
-        return True
-    # Bỏ qua các post có "__cft__" (thường là comment)
-    if "__cft__" in trimmed.lower():
-        return True
-    return False
-
-
-def _is_useful_post(text: str) -> bool:
-    """Chỉ giữ lại các bài đăng hợp lệ, bỏ comment/liên kết vô nghĩa."""
-    if _looks_like_comment(text):
-        return False
-    # Chỉ loại bỏ post nếu text quá ngắn (ví dụ < 20 ký tự)
-    if len(text) < 20:
-        return False
-    # Giữ lại mọi post có ít nhất một phần nội dung
-    return True
+def _extract_comment_time(block) -> str | None:
+    if block is None:
+        return None
+    for node in block.find_all(attrs={"aria-label": True}):
+        aria = _clean_text(node.get("aria-label"))
+        match = COMMENT_TIME_RE.search(aria) or COMMENT_TIME_EN_RE.search(aria)
+        if match:
+            return match.group(1).strip()
+    text = _clean_text(block.get_text(" ", strip=True))
+    match = re.search(
         r"\b\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|giờ trước)(?:\s*trước)?\b", text
     )
     return match.group(0).strip() if match else None
