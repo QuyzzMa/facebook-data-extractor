@@ -469,6 +469,18 @@ async def _open_owned_context(
     return browser, context, page
 
 
+def _on_target(current: str, target: str) -> bool:
+    """True neu trinh duyet van o trang dich (hoac mot bai viet cua trang do)."""
+    from urllib.parse import urlparse
+
+    cur, tgt = urlparse(current), urlparse(target)
+    tpath = tgt.path.rstrip("/")
+    if not tpath:
+        return True
+    cpath = cur.path.rstrip("/")
+    return cur.netloc == tgt.netloc and (cpath == tpath or cpath.startswith(tpath + "/"))
+
+
 async def fetch_rendered_html(
     url: str,
     max_scrolls: int = 40,
@@ -597,6 +609,17 @@ async def fetch_rendered_html(
                 if expand_comments and index % EXPAND_COMMENTS_EVERY == 0:
                     await _expand_comment_threads(page, rounds=1, limit=6)
 
+                if not _on_target(page.url, url):
+                    logger.warning(
+                        "Trinh duyet roi khoi trang dich (dang o %s); quay lai va bo qua luot nay.",
+                        page.url[:90],
+                    )
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        await page.wait_for_timeout(INITIAL_SETTLE_MS)
+                    except Exception:
+                        logger.exception("Khong quay lai duoc trang dich")
+                    continue
                 stories = await _collect_stories(page)
                 added = _merge_into(collected, stories)
                 logger.info(
@@ -607,6 +630,18 @@ async def fetch_rendered_html(
                     len(collected),
                     added,
                 )
+                try:
+                    diag = await page.evaluate(
+                        "() => ({y: Math.round(window.scrollY), "
+                        "h: document.documentElement.scrollHeight, "
+                        "d: document.querySelectorAll('[role=\"dialog\"]').length})"
+                    )
+                    logger.info(
+                        "  diag | scrollY=%s scrollHeight=%s dialogs=%s url=%s",
+                        diag["y"], diag["h"], diag["d"], page.url[:90],
+                    )
+                except Exception:
+                    pass
 
                 if snapshot_every and (index + 1) % snapshot_every == 0:
                     snapshots.append(await page.content())

@@ -102,7 +102,7 @@ def main() -> None:
         max_scrolls=config.get("max_scrolls", 40),
         scroll_pause_seconds=config.get("scroll_pause_seconds", 2),
         max_scroll_seconds=config.get("max_scroll_seconds", 0),
-        expand_comments=config.get("expand_comments", True),
+        expand_comments=config.get("expand_comments", config.get("extract_mode") == "commenters"),
         snapshot_every=config.get("snapshot_every", 0) if extract_mode == "commenters" else 0,
         headless=config.get("headless", False),
         timeout_ms=config.get("timeout_ms", 30_000),
