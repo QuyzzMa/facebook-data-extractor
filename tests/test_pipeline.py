@@ -127,6 +127,20 @@ def test_parse_commenters():
     assert row["comment_time"] == "15 giờ trước"
 
 
+def test_on_target():
+    from src.scraper import _on_target
+
+    target = "https://www.facebook.com/schannel.vn"
+    assert _on_target(target, target)
+    assert _on_target(target + "/", target)
+    assert _on_target(target + "/posts/pfbid1", target)
+    assert not _on_target("https://www.facebook.com/", target)
+    assert not _on_target("https://www.facebook.com/groups/x/posts/1", target)
+    assert not _on_target(target + "2", target)  # tien to giong nhau nhung khac trang
+    profile = "https://www.facebook.com/profile.php?id=5"
+    assert _on_target(profile, profile)
+
+
 if __name__ == "__main__":
     import traceback
 
