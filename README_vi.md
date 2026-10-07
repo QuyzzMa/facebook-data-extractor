@@ -83,3 +83,10 @@ Tài liệu HTML đã gộp là phần tử **cuối cùng** trong danh sách tr
 1. Mở URL → thấy đúng giao diện demo, có thể đổi **theme sáng/tối**, lướt có hiệu ứng.
 2. Vào mục **"Chạy dữ liệu thật"** → nhấn **Chạy** → thấy thông báo cần `python server.py` (đó là hành vi đúng của bản tĩnh).
 3. Nếu muốn xem dữ liệu thật: chạy server địa phương như hướng dẫn ở trên.
+
+## Lưu ý khi chạy
+
+- `expand_comments`: mở rộng bình luận. Chỉ cần ở chế độ `commenters`. Ở chế độ `posts` nên để `false`, vì bấm vào bình luận có thể làm trình duyệt chuyển sang trang khác (nhóm, bảng tin) và dữ liệu bị lẫn.
+- Nếu trình duyệt rời khỏi trang đích khi đang cuộn, chương trình sẽ ghi cảnh báo "Trinh duyet roi khoi trang dich", tự quay lại và bỏ qua lượt đó.
+- `max_scrolls`: số lần cuộn (mặc định 40, khoảng 30 bài). Tăng lên sẽ lấy nhiều bài hơn nhưng chạy lâu hơn và dễ gặp kiểm tra bảo mật của Facebook.
+- Thư mục `output/` và `data/raw/` có thể chứa dữ liệu của người khác. Không đưa lên GitHub và không chia sẻ công khai.
