@@ -3,7 +3,7 @@
   "max_scrolls": 40,
   "scroll_pause_seconds": 2,
   "max_scroll_seconds": 120,
-  "expand_comments": true,
+  "expand_comments": false,
   "snapshot_every": 5,
   "extract_mode": "commenters",
   "headless": false,
