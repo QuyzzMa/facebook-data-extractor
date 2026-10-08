@@ -141,6 +141,54 @@ def test_on_target():
     assert _on_target(profile, profile)
 
 
+def _fixed_now():
+    from datetime import datetime
+
+    from src.dates import VN_TZ
+
+    return datetime(2026, 10, 7, 14, 0, tzinfo=VN_TZ)
+
+
+def test_parse_fb_datetime_absolute():
+    from src.dates import parse_fb_datetime
+
+    now = _fixed_now()
+    got = parse_fb_datetime("Thứ Tư, 7 Tháng 10, 2026 lúc 13:20", now)
+    assert (got.year, got.month, got.day, got.hour, got.minute) == (2026, 10, 7, 13, 20)
+    got = parse_fb_datetime("October 7, 2026 at 1:20 PM", now)
+    assert (got.year, got.month, got.day, got.hour, got.minute) == (2026, 10, 7, 13, 20)
+
+
+def test_parse_fb_datetime_relative():
+    from src.dates import parse_fb_datetime
+
+    now = _fixed_now()
+    assert parse_fb_datetime("3 giờ", now).hour == 11
+    assert parse_fb_datetime("2 ngày", now).day == 5
+    got = parse_fb_datetime("Hôm qua lúc 10:00", now)
+    assert (got.day, got.hour, got.minute) == (6, 10, 0)
+    assert parse_fb_datetime("abc", now) is None
+
+
+def test_filter_by_date():
+    import pandas as pd
+
+    from src.dates import filter_by_date
+
+    now = _fixed_now()
+    df = pd.DataFrame({"timestamp_text": [
+        "Thứ Tư, 7 Tháng 10, 2026 lúc 13:20",
+        "Thứ Hai, 1 Tháng 9, 2026 lúc 09:00",
+        "Thứ Sáu, 30 Tháng 10, 2026 lúc 09:00",
+        "abc",
+    ]})
+    out, stats = filter_by_date(df, "timestamp_text", "2026-10-01", "2026-10-15", now, keep_undated=True)
+    assert stats == {"total": 4, "kept": 2, "dropped_out_of_range": 2, "undated": 1}
+    assert set(out["date_status"]) == {"ok", "undated"}
+    out, stats = filter_by_date(df, "timestamp_text", "2026-10-01", "2026-10-15", now, keep_undated=False)
+    assert stats["kept"] == 1 and stats["undated"] == 1
+
+
 if __name__ == "__main__":
     import traceback
 
