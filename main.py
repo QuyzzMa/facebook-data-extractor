@@ -141,6 +141,23 @@ def main() -> None:
             raise RuntimeError("Zero records parsed. See data/raw for the rendered HTML snapshot.")
 
     df = clean_commenters(raw_df) if extract_mode == "commenters" else clean_posts(raw_df)
+    date_from = str(config.get("date_from", "") or "").strip()
+    date_to = str(config.get("date_to", "") or "").strip()
+    if date_from or date_to:
+        from src.dates import VN_TZ, filter_by_date
+        date_column = "comment_time" if extract_mode == "commenters" else "timestamp_text"
+        try:
+            df, date_stats = filter_by_date(
+                df, date_column, date_from, date_to, datetime.now(VN_TZ),
+                keep_undated=bool(config.get("keep_undated", True)),
+            )
+        except ValueError as exc:
+            raise SystemExit(f"Cau hinh ngay khong hop le (date_from/date_to): {exc}")
+        logger.info(
+            "Date filter: kept %s/%s (dropped %s out of range, %s undated)",
+            date_stats["kept"], date_stats["total"],
+            date_stats["dropped_out_of_range"], date_stats["undated"],
+        )
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = config.get("output_prefix", "facebook_posts")

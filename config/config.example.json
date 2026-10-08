@@ -23,5 +23,8 @@
   "save_storage_state": true,
   "use_real_chrome": false,
   "prompt_for_url": true,
-  "browser_executable": ""
+  "browser_executable": "",
+  "date_from": "",
+  "date_to": "",
+  "keep_undated": true
 }
