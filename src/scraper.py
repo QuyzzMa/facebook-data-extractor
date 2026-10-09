@@ -42,31 +42,64 @@ Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
 # the opening text of the card, and merge the unique cards before parsing.
 ARTICLE_SELECTOR = '[role="article"]'
 STORY_DEDUPE_PREFIX_CHARS = 200
-SCROLL_STEP_PIXELS = 1000
+SCROLL_STEP_PIXELS = 700
 
 COLLECT_STORIES_JS = """
 () => {
   const prefixLength = %d;
   const normalise = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+  const commentLabel = /^(Bình luận|Phản hồi|Comment|Reply)/i;
+  const messageSelector = '[data-ad-preview], [data-ad-comet-preview]';
+  const out = [];
+
+  // Posts: Facebook keeps one aria-posinset container per post in the feed, but
+  // empties it once it scrolls away, so only containers that still carry text count.
+  const posts = Array.from(document.querySelectorAll('[aria-posinset]')).filter(
+    (node) => !node.parentElement || !node.parentElement.closest('[aria-posinset]')
+  );
+  posts.forEach((node) => {
+    const clone = node.cloneNode(true);
+    // Comment threads are collected separately below; drop them from the post card
+    // (but never drop an article that holds the post message itself).
+    clone.querySelectorAll('[role="article"]').forEach((nested) => {
+      if (nested.querySelector(messageSelector)) return;
+      nested.remove();
+    });
+    const ownText = normalise(clone.textContent);
+    if (ownText.length < 20) return;
+    out.push({
+      key: 'post|' + (node.getAttribute('aria-posinset') || ownText.slice(0, prefixLength).toLowerCase()),
+      html: clone.outerHTML,
+      text_length: ownText.length,
+      kind: 'post',
+    });
+  });
+
+  // Comment threads and any other top-level article cards (unchanged behaviour).
   const articles = Array.from(document.querySelectorAll('[role="article"]'));
   const topLevel = articles.filter((node) => {
     const parent = node.parentElement;
     return !parent || !parent.closest('[role="article"]');
   });
-  return topLevel.map((node) => {
+  topLevel.forEach((node) => {
     const clone = node.cloneNode(true);
-    // Nested cards are the comment threads; their text must not leak into the
-    // key of the post that contains them.
     clone.querySelectorAll('[role="article"]').forEach((nested) => nested.remove());
     const ownText = normalise(clone.textContent);
     const permalink = node.querySelector(
       'a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"]'
     );
     const html = node.outerHTML;
+    const label = node.getAttribute('aria-label') || '';
     const key = (ownText.slice(0, prefixLength) || (permalink ? permalink.href : '')
       || normalise(html).slice(0, prefixLength)).toLowerCase();
-    return { key: key, html: html, text_length: ownText.length };
+    out.push({
+      key: 'article|' + key,
+      html: html,
+      text_length: ownText.length,
+      kind: commentLabel.test(label) ? 'comment' : 'article',
+    });
   });
+  return out;
 }
 """ % STORY_DEDUPE_PREFIX_CHARS
 
@@ -111,7 +144,9 @@ def _merge_into(collected: dict[str, dict], stories: list[dict]) -> int:
             added += 1
         # Overwrite on purpose: a later capture of the same card usually carries
         # more expanded comments than the first one.
-        collected[key] = story
+        previous = collected.get(key)
+        if previous is None or len(story.get("html", "")) >= len(previous.get("html", "")):
+            collected[key] = story
     return added
 
 
@@ -653,7 +688,13 @@ async def fetch_rendered_html(
                 await _expand_comment_threads(page)
             await _expand_see_more(page)
             added = _merge_into(collected, await _collect_stories(page))
-            logger.info("Final sweep | unique stories collected: %s (+%s)", len(collected), added)
+            logger.info(
+                "Final sweep | unique stories collected: %s (+%s) | posts: %s | comments: %s",
+                len(collected),
+                added,
+                sum(1 for s in collected.values() if s.get("kind") == "post"),
+                sum(1 for s in collected.values() if s.get("kind") != "post"),
+            )
 
             html = await page.content()
             snapshots.append(html)
