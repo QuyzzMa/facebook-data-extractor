@@ -68,7 +68,7 @@ COLLECT_STORIES_JS = """
     const ownText = normalise(clone.textContent);
     if (ownText.length < 20) return;
     out.push({
-      key: 'post|' + ownText.slice(0, prefixLength).toLowerCase(),
+      key: 'post|' + (node.getAttribute('aria-posinset') || ownText.slice(0, prefixLength).toLowerCase()),
       html: clone.outerHTML,
       text_length: ownText.length,
       kind: 'post',
