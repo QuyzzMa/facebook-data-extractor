@@ -386,6 +386,8 @@ def parse_commenters(html: str, source_url: str) -> pd.DataFrame:
             name = _clean_text(link.get_text(" ", strip=True))
             if not name or "comment_id" not in href:
                 continue
+            if link.find_parent(attrs={"data-fx-post": True}):
+                continue
             if any(token in href for token in STRONG_POST_TOKENS):
                 continue
             if "/photo" in href or "/stories/" in href:
@@ -405,4 +407,44 @@ def parse_commenters(html: str, source_url: str) -> pd.DataFrame:
                 "comment_time": _extract_comment_time(block),
             })
 
+    try:
+        records.extend(_parse_wrapped_comments(soup, source_url, seen))
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Could not read tagged comments")
     return pd.DataFrame(records)
+
+
+def _parse_wrapped_comments(soup, source_url: str, seen: set) -> list[dict]:
+    """Comments the scraper tagged with the post that holds them (data-fx-post)."""
+    out: list[dict] = []
+    for wrapper in soup.select("[data-fx-post]"):
+        post_url = wrapper.get("data-fx-post-url") or None
+        post_index = wrapper.get("data-fx-post") or None
+        card = wrapper.select_one('[role="article"]') or wrapper
+        for link in card.find_all("a", href=True):
+            href = link.get("href", "")
+            name = _clean_text(link.get_text(" ", strip=True))
+            if not name or "comment_id" not in href:
+                continue
+            if any(token in href for token in STRONG_POST_TOKENS):
+                continue
+            if "/photo" in href or "/stories/" in href:
+                continue
+            user_url = urljoin(source_url, _strip_tracking(href))
+            key = (post_url or post_index or "", user_url, name)
+            if key in seen:
+                break
+            seen.add(key)
+            out.append({
+                "source_url": source_url,
+                "post_url": post_url,
+                "user_name": name,
+                "user_url": user_url,
+                "comment_text": _extract_comment_text(card, name),
+                "comment_time": _extract_comment_time(card),
+                "post_index": post_index,
+            })
+            break
+    return out

@@ -88,15 +88,38 @@ COLLECT_STORIES_JS = """
     const permalink = node.querySelector(
       'a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"]'
     );
-    const html = node.outerHTML;
     const label = node.getAttribute('aria-label') || '';
-    const key = (ownText.slice(0, prefixLength) || (permalink ? permalink.href : '')
-      || normalise(html).slice(0, prefixLength)).toLowerCase();
+    const isComment = commentLabel.test(label);
+    // Which post holds this comment? Use the feed container number and the post's
+    // own permalink (never a comment permalink, those carry comment_id).
+    const host = node.closest('[aria-posinset]');
+    const postId = host ? (host.getAttribute('aria-posinset') || '') : '';
+    let postUrl = '';
+    if (host) {
+      const links = host.querySelectorAll(
+        'a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"], a[href*="story_fbid"], a[href*="/permalink/"]'
+      );
+      for (const candidate of links) {
+        if (candidate.href && candidate.href.indexOf('comment_id') === -1) {
+          postUrl = candidate.href;
+          break;
+        }
+      }
+    }
+    const escapeAttr = (value) => String(value || '')
+      .split('&').join('&amp;').split('"').join('&quot;').split('<').join('&lt;');
+    let html = node.outerHTML;
+    if (isComment && postId) {
+      html = '<div data-fx-post="' + escapeAttr(postId) + '" data-fx-post-url="'
+        + escapeAttr(postUrl) + '">' + html + '</div>';
+    }
+    const baseKey = (ownText.slice(0, prefixLength) || (permalink ? permalink.href : '')
+      || normalise(node.outerHTML).slice(0, prefixLength)).toLowerCase();
     out.push({
-      key: 'article|' + key,
+      key: 'article|' + (isComment && postId ? postId + '|' : '') + baseKey,
       html: html,
       text_length: ownText.length,
-      kind: commentLabel.test(label) ? 'comment' : 'article',
+      kind: isComment ? 'comment' : 'article',
     });
   });
   return out;
