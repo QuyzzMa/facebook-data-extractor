@@ -90,3 +90,14 @@ Tài liệu HTML đã gộp là phần tử **cuối cùng** trong danh sách tr
 - Nếu trình duyệt rời khỏi trang đích khi đang cuộn, chương trình sẽ ghi cảnh báo "Trinh duyet roi khoi trang dich", tự quay lại và bỏ qua lượt đó.
 - `max_scrolls`: số lần cuộn (mặc định 40, khoảng 30 bài). Tăng lên sẽ lấy nhiều bài hơn nhưng chạy lâu hơn và dễ gặp kiểm tra bảo mật của Facebook.
 - Thư mục `output/` và `data/raw/` có thể chứa dữ liệu của người khác. Không đưa lên GitHub và không chia sẻ công khai.
+
+## Quy trình lấy bài đăng và bình luận
+
+1. **Lấy bài đăng.** Trong `config\config.json` đặt `"extract_mode": "posts"` và `"expand_comments": false`, rồi chạy:
+   `.\.venv\Scripts\python.exe main.py`
+   Kết quả: `output\facebook_posts_<giờ>.csv` (khoảng 50 bài, có số bình luận, lượt thích, thời gian).
+2. **Lấy bình luận đầy đủ của từng bài.**
+   `.\.venv\Scripts\python.exe scripts\deep_comments.py --max-posts 3 --most-commented`
+   Script đọc file bài đăng mới nhất và chỉ mở các bài có link dùng được (link ảnh `set=a`, `/posts/`, `/reel/`, `/videos/`). Nó bỏ qua bài chưa có bình luận và tự dừng khi gặp trang đăng nhập, kiểm tra bảo mật hoặc thông báo bị hạn chế. Kết quả: `output\facebook_comments_<giờ>.csv`.
+3. **Giới hạn.** Bài nhiều ảnh (`set=pcb`) và bài không có link chưa lấy được. Mỗi bài mặc định tối đa 150 bình luận hoặc 90 giây (`--max-comments`, `--seconds`), và số lấy được thường ít hơn số Facebook ghi. Chạy nhiều lần liên tiếp dễ bị Facebook hạn chế tạm thời, nên nghỉ vài giờ giữa các lần.
+4. **Dữ liệu cá nhân.** File bình luận chứa tên và link hồ sơ người dùng thật. Chỉ dùng cho mục đích hợp lệ, không đăng công khai và không đưa lên GitHub (thư mục `output\` đã nằm ngoài GitHub).
